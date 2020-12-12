@@ -1,4 +1,4 @@
-#!/usr/bin/python3.8
+#!/usr/bin/python3
 """Extract waypoints out of a single image.
     Has two functionolities
         Image retrieval: calculates 3d location based on an image
