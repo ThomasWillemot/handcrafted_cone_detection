@@ -36,17 +36,10 @@ generate_messages(
 )
 
 catkin_package(
-   INCLUDE_DIRS include
    LIBRARIES handcrafted_cone_detection
    CATKIN_DEPENDS roscpp rospy std_msgs message_runtime
 )
 
-
-
-include_directories(
-# include
-  ${catkin_INCLUDE_DIRS}
-)
 
 
 catkin_install_python(PROGRAMS

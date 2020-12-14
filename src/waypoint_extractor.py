@@ -7,7 +7,6 @@
 import numpy as np
 from cv_bridge import CvBridge
 import rospy
-from geometry_msgs.msg import TransformStamped, Transform, Vector3
 from sensor_msgs.msg import *
 from tf2_msgs.msg import *
 
@@ -217,10 +216,10 @@ class WaypointExtractor:
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint_1(self, image):
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
-                                  borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
+        #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
-        bin_im = self.get_cone_binary(current_image, threshold=80)
+        bin_im = self.get_cone_binary(cv_im, threshold=90)
         # Positioning in 2D of cone parts
         loc_2d = self.get_cone_2d_location(bin_im)
         # Get the position and width of the cone
@@ -232,10 +231,10 @@ class WaypointExtractor:
 
     def extract_waypoint_2(self, image):
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
-                                  borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
+        #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
-        bin_im = self.get_cone_binary(current_image, threshold=80)
+        bin_im = self.get_cone_binary(cv_im, threshold=90)
         # Positioning in 2D of cone parts
         loc_2d = self.get_cone_2d_location(bin_im)
         # Get the position and width of the cone
@@ -249,6 +248,14 @@ class WaypointExtractor:
     def handle_cor_req(self, req):
         # should also transform last coordinates
         coor = self.get_depth_triang(self.x_1, self.x_2, self.y_1, self.y_2)
+        if coor[0]>1:
+            coor[0] =1
+            coor[1] /=coor[0]
+            coor[2] /= coor[0]
+        elif coor[0]< 0:
+            coor[0] = 0
+            coor[1] = 0
+            coor[2] = 0
         return SendRelCorResponse(coor[0], coor[1], coor[2])
         # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
 
