@@ -12,3 +12,34 @@ call the service using following command:
 ```
 rosservice call /rel_cor
 ```
+
+Python snippet to call the service:
+```
+#!/usr/bin/env python
+import rospy
+from handcrafted_cone_detection.srv import SendRelCor
+
+class WaypointClient:
+    def __init__(self):
+        # Connect to service
+        print('Waiting for service')
+        rospy.wait_for_service('rel_cor')
+        print('service found!')
+        self.get_rel_cor = rospy.ServiceProxy('rel_cor', SendRelCor)
+
+    #Retrieves coordinates
+        try:
+            relative_coordinates = self.get_rel_cor() #calls service and captures response
+            print('X,Y,Z coordinates:)
+            print(relative_coordinates.x)
+            print(relative_coordinates.y)
+            print(relative_coordinates.z)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+       
+
+if __name__ == '__main__':
+    new_wp_client = WaypointClient()
+    new_wp_client.run_test()
+
+```
