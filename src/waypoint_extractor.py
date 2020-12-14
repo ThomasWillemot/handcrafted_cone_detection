@@ -9,8 +9,6 @@ from cv_bridge import CvBridge
 import rospy
 from sensor_msgs.msg import *
 from tf2_msgs.msg import *
-
-sys.path.append('src/sim/ros/test')
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 import cv2
 from std_msgs.msg import *
