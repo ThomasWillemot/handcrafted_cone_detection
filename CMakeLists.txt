@@ -40,7 +40,9 @@ catkin_package(
    CATKIN_DEPENDS roscpp rospy std_msgs message_runtime
 )
 
-
+include_directories(
+ ${catkin_INCLUDE_DIRS}
+ )
 
 catkin_install_python(PROGRAMS
   src/waypoint_extractor.py
