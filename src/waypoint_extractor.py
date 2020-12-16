@@ -255,6 +255,9 @@ class WaypointExtractor:
             coor[0] = 0
             coor[1] = 0
             coor[2] = 0
+
+        # TEST DUMMY - REMOVE THIS
+        # coor = [0, 0, 10]
         return SendRelCorResponse(coor[0], coor[1], coor[2])
         # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
     
@@ -262,7 +265,7 @@ class WaypointExtractor:
         '''
         '''
         self.fsm_handshake_srv = rospy.Service(
-            "/waypoint_extractor/fsm_handshake", Trigger, self.fsm_handshake)
+            "/waypoint_extractor_server/fsm_handshake", Trigger, self.fsm_handshake)
 
     def fsm_handshake(self, _):
         '''Handles handshake with FSM. Return that initialization was successful and 
@@ -273,7 +276,7 @@ class WaypointExtractor:
 
     #  Service for delivery of current relative coordinates
     def rel_cor_server(self):
-        s = rospy.Service('rel_cor', SendRelCor, self.handle_cor_req)
+        s = rospy.Service('/waypoint_extractor_server/rel_cor', SendRelCor, self.handle_cor_req)
         rospy.loginfo("WPE  - Waypoint extractor running. Waiting for request")
 
     # Subscribes to topics and and runs callbacks
