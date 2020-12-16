@@ -13,6 +13,7 @@ from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 import cv2
 from std_msgs.msg import *
 from geometry_msgs import *
+from std_srvs.srv import Trigger
 
 
 class WaypointExtractor:
@@ -256,11 +257,24 @@ class WaypointExtractor:
             coor[2] = 0
         return SendRelCorResponse(coor[0], coor[1], coor[2])
         # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
+    
+    def _init_fsm_handshake_srv(self):
+        '''
+        '''
+        self.fsm_handshake_srv = rospy.Service(
+            "/waypoint_extractor/fsm_handshake", Trigger, self.fsm_handshake)
+
+    def fsm_handshake(self, _):
+        '''Handles handshake with FSM. Return that initialization was successful and 
+	waypoint exctractor is running.
+        '''
+
+        return{"success": True, "message": ""}
 
     #  Service for delivery of current relative coordinates
     def rel_cor_server(self):
         s = rospy.Service('rel_cor', SendRelCor, self.handle_cor_req)
-        print("Waiting for request")
+        rospy.loginfo("WPE  - Waypoint extractor running. Waiting for request")
 
     # Subscribes to topics and and runs callbacks
     def image_subscriber(self):
@@ -269,6 +283,7 @@ class WaypointExtractor:
 
     # Starts all needed functionalities
     def run(self):
+        self._init_fsm_handshake_srv()
         self.image_subscriber()
         self.rel_cor_server()
         rospy.spin()
