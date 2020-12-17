@@ -39,11 +39,15 @@ class WaypointExtractor:
         self.y_orig = 0
         self.z_orig = 0
         self.imagexite_rec = 0
+ 
         self.rate = rospy.Rate(1000)
         self.is_processing_image1 = False
         self.is_processing_image2 = False
         self.image1_buffer = []
         self.image2_buffer = []
+        self.image_stamp = rospy.Time(0)
+
+        self._init_fsm_handshake_srv()
 
 
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
@@ -268,7 +272,7 @@ class WaypointExtractor:
 
         # TEST DUMMY - REMOVE THIS
         # coor = [0, 0, 10]
-        return SendRelCorResponse(coor[0], coor[1], coor[2])
+        return SendRelCorResponse(coor[0], coor[1], coor[2], self.image_stamp)
         # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
     
     def _init_fsm_handshake_srv(self):
@@ -302,10 +306,9 @@ class WaypointExtractor:
         self.image2_buffer.append(image)
         # print(image.header.stamp.to_sec())
 
-
     # Starts all needed functionalities
     def run(self):
-        self._init_fsm_handshake_srv()
+
         self.image_subscriber()
         self.rel_cor_server()
         
@@ -313,23 +316,25 @@ class WaypointExtractor:
              if self.image1_buffer and self.image2_buffer:
                  image1 = self.image1_buffer.pop()
                  image2 = self.image2_buffer.pop()
+
                  # Make sure that two processed images belong to same timestamp
-                 if image1.header.stamp > image2.header.stamp:
-                     while image1.header.stamp > image2.header.stamp:
+                 while self.image1_buffer and image1.header.stamp > image2.header.stamp:
                          image1 = self.image1_buffer.pop()
-                 elif image1.header.stamp < image2.header.stamp:
-                     while image1.header.stamp < image2.header.stamp:
+                 while self.image2_buffer and image1.header.stamp < image2.header.stamp:
                          image2 = self.image2_buffer.pop()
                  print("pop")
                  print(image1.header.stamp.to_sec())
                  print(image2.header.stamp.to_sec())
+
                  self.image1_buffer.clear()
                  self.image2_buffer.clear()
 
                  self.extract_waypoint_1(image1)
                  self.extract_waypoint_2(image2)
-             
-             # print(self.is_processing_image1, self.is_processing_image2)
+                 self.image_stamp = image1.header.stamp
+                 print("STAMP")
+                 print(self.image_stamp)
+
              self.rate.sleep()
                  
         # rospy.spin()
