@@ -19,6 +19,9 @@ from std_srvs.srv import Trigger
 class WaypointExtractor:
 
     def __init__(self):
+
+        rospy.init_node('waypoint_extractor_server')
+
         self.bridge = CvBridge()
         dim = (800, 848)
         k = np.array(
@@ -36,7 +39,12 @@ class WaypointExtractor:
         self.y_orig = 0
         self.z_orig = 0
         self.imagexite_rec = 0
-        rospy.init_node('waypoint_extractor_server')
+        self.rate = rospy.Rate(1000)
+        self.is_processing_image1 = False
+        self.is_processing_image2 = False
+        self.image1_buffer = []
+        self.image2_buffer = []
+
 
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
     # inputs: image and color of cone
@@ -214,6 +222,7 @@ class WaypointExtractor:
 
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint_1(self, image):
+        print("extract wp 1")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
@@ -229,6 +238,7 @@ class WaypointExtractor:
         self.y_1 = loc_2d[1]
 
     def extract_waypoint_2(self, image):
+        print("extract wp 2")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
@@ -271,7 +281,6 @@ class WaypointExtractor:
         '''Handles handshake with FSM. Return that initialization was successful and 
 	waypoint exctractor is running.
         '''
-
         return{"success": True, "message": ""}
 
     #  Service for delivery of current relative coordinates
@@ -281,15 +290,49 @@ class WaypointExtractor:
 
     # Subscribes to topics and and runs callbacks
     def image_subscriber(self):
-        rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.extract_waypoint_1)
-        rospy.Subscriber("/camera/fisheye2/image_raw", Image, self.extract_waypoint_2)
+        # These always come together.
+        rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.fisheye1_callback)
+        rospy.Subscriber("/camera/fisheye2/image_raw", Image, self.fisheye2_callback)
+
+    def fisheye1_callback(self, image):
+        self.image1_buffer.append(image)
+        # print(image.header.stamp.to_sec())
+
+    def fisheye2_callback(self, image):
+        self.image2_buffer.append(image)
+        # print(image.header.stamp.to_sec())
+
 
     # Starts all needed functionalities
     def run(self):
         self._init_fsm_handshake_srv()
         self.image_subscriber()
         self.rel_cor_server()
-        rospy.spin()
+        
+        while not rospy.is_shutdown():
+             if self.image1_buffer and self.image2_buffer:
+                 image1 = self.image1_buffer.pop()
+                 image2 = self.image2_buffer.pop()
+                 # Make sure that two processed images belong to same timestamp
+                 if image1.header.stamp > image2.header.stamp:
+                     while image1.header.stamp > image2.header.stamp:
+                         image1 = self.image1_buffer.pop()
+                 elif image1.header.stamp < image2.header.stamp:
+                     while image1.header.stamp < image2.header.stamp:
+                         image2 = self.image2_buffer.pop()
+                 print("pop")
+                 print(image1.header.stamp.to_sec())
+                 print(image2.header.stamp.to_sec())
+                 self.image1_buffer.clear()
+                 self.image2_buffer.clear()
+
+                 self.extract_waypoint_1(image1)
+                 self.extract_waypoint_2(image2)
+             
+             # print(self.is_processing_image1, self.is_processing_image2)
+             self.rate.sleep()
+                 
+        # rospy.spin()
 
 
 if __name__ == "__main__":
