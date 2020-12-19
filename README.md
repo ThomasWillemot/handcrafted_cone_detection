@@ -10,7 +10,7 @@ rosrun handcrafted_cone_detection waypoint_extractor.py
 ```
 call the service using following command:
 ```
-rosservice call /rel_cor
+rosservice call /waypoint_extractor_server/rel_cor
 ```
 
 Python snippet to call the service:
@@ -23,9 +23,9 @@ class WaypointClient:
     def __init__(self):
         # Connect to service
         print('Waiting for service')
-        rospy.wait_for_service('rel_cor')
+        rospy.wait_for_service('/waypoint_extractor_server/rel_cor')
         print('service found!')
-        self.get_rel_cor = rospy.ServiceProxy('rel_cor', SendRelCor)
+        self.get_rel_cor = rospy.ServiceProxy('/waypoint_extractor_server/rel_cor', SendRelCor)
 
     #Retrieves coordinates
         try:

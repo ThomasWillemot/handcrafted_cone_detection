@@ -7,17 +7,21 @@
 import numpy as np
 from cv_bridge import CvBridge
 import rospy
+import cv2
+
 from sensor_msgs.msg import *
 from tf2_msgs.msg import *
-from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
-import cv2
 from std_msgs.msg import *
 from geometry_msgs import *
-
+from std_srvs.srv import Trigger
+from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 
 class WaypointExtractor:
 
     def __init__(self):
+
+        rospy.init_node('waypoint_extractor_server')
+
         self.bridge = CvBridge()
         dim = (800, 848)
         k = np.array(
@@ -35,7 +39,14 @@ class WaypointExtractor:
         self.y_orig = 0
         self.z_orig = 0
         self.imagexite_rec = 0
-        rospy.init_node('waypoint_extractor_server')
+ 
+        self.rate = rospy.Rate(1000)
+        self.image1_buffer = []
+        self.image2_buffer = []
+        self.image_stamp = rospy.Time(0)
+
+        self._init_fsm_handshake_srv()
+
 
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
     # inputs: image and color of cone
@@ -213,6 +224,7 @@ class WaypointExtractor:
 
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint_1(self, image):
+        print("Extract wp 1")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
@@ -228,6 +240,7 @@ class WaypointExtractor:
         self.y_1 = loc_2d[1]
 
     def extract_waypoint_2(self, image):
+        print("Extract wp 2")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
@@ -254,26 +267,87 @@ class WaypointExtractor:
             coor[0] = 0
             coor[1] = 0
             coor[2] = 0
-        return SendRelCorResponse(coor[0], coor[1], coor[2])
+
+        print("STAMP")
+        print(self.image_stamp)
+        # TEST DUMMY - REMOVE THIS
+        # coor = [0, 3, 4]
+        return SendRelCorResponse(coor[0], coor[1], coor[2], self.image_stamp)
         # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
+    
+    def _init_fsm_handshake_srv(self):
+        '''Setup handshake service for FSM.
+        '''
+        self.fsm_handshake_srv = rospy.Service(
+            "/waypoint_extractor_server/fsm_handshake", Trigger, self.fsm_handshake)
 
-    #  Service for delivery of current relative coordinates
+    def fsm_handshake(self, _):
+        '''Handles handshake with FSM. Return that initialization was successful and 
+	waypoint exctractor is running.
+        '''
+        return{"success": True, "message": ""}
+
     def rel_cor_server(self):
-        s = rospy.Service('rel_cor', SendRelCor, self.handle_cor_req)
-        print("Waiting for request")
+        '''Service for delivery of current relative coordinates
+        '''
+        s = rospy.Service('/waypoint_extractor_server/rel_cor', SendRelCor, self.handle_cor_req)
+        rospy.loginfo("WPE  - Waypoint extractor running. Waiting for request")
 
-    # Subscribes to topics and and runs callbacks
     def image_subscriber(self):
-        rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.extract_waypoint_1)
-        rospy.Subscriber("/camera/fisheye2/image_raw", Image, self.extract_waypoint_2)
+        '''Subscribes to topics and and runs callbacks
+        '''
+        # These always come with identical timestamps. Callbacks at slightly offset times.
+        rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.fisheye1_callback)
+        rospy.Subscriber("/camera/fisheye2/image_raw", Image, self.fisheye2_callback)
 
-    # Starts all needed functionalities
+    def fisheye1_callback(self, image):
+        '''Buffer images coming from /camera/fisheye1/image_raw. Buffer is cleared in run().
+        Args:
+            image: std_msgs/Image
+        '''
+        self.image1_buffer.append(image)
+
+    def fisheye2_callback(self, image):
+        '''Buffer images coming from /camera/fisheye2/image_raw. Buffer is cleared in run().
+        Args:
+            image: std_msgs/Image
+        '''
+        self.image2_buffer.append(image)
+
     def run(self):
+        '''Starts all needed functionalities + Main loop
+        '''
         self.image_subscriber()
         self.rel_cor_server()
-        rospy.spin()
+        
+        while not rospy.is_shutdown():
+
+             if self.image1_buffer and self.image2_buffer:
+                 image1 = self.image1_buffer.pop()
+                 image2 = self.image2_buffer.pop()
+
+                 # Make sure that two processed images belong to same timestamp
+                 while self.image1_buffer and image1.header.stamp > image2.header.stamp:
+                         image1 = self.image1_buffer.pop()
+                 while self.image2_buffer and image1.header.stamp < image2.header.stamp:
+                         image2 = self.image2_buffer.pop()
+                 print("pop")
+                 print(image1.header.stamp.to_sec())
+                 print(image2.header.stamp.to_sec())
+
+                 self.image1_buffer.clear()
+                 self.image2_buffer.clear()
+
+                 self.extract_waypoint_1(image1)
+                 self.extract_waypoint_2(image2)
+                 self.image_stamp = image1.header.stamp
+
+             self.rate.sleep()
+                 
+        # rospy.spin()
 
 
 if __name__ == "__main__":
     waypoint_extractor = WaypointExtractor()
     waypoint_extractor.run()
+
