@@ -16,6 +16,7 @@ from geometry_msgs import *
 from std_srvs.srv import Trigger
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 
+
 class WaypointExtractor:
 
     def __init__(self):
@@ -39,14 +40,13 @@ class WaypointExtractor:
         self.y_orig = 0
         self.z_orig = 0
         self.imagexite_rec = 0
- 
+
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
 
         self._init_fsm_handshake_srv()
-
 
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
     # inputs: image and color of cone
@@ -100,7 +100,7 @@ class WaypointExtractor:
             return self.get_cone_2d_strided(bin_im)
         x_prev_pix = prev_coor[0] + 400
         y_prev_pix = -prev_coor[1] + 424
-        if prev_coor[1] > 846 or prev_coor[0] <2 or prev_coor[1] <2 or prev_coor[0] >= 799:
+        if prev_coor[1] > 846 or prev_coor[0] < 2 or prev_coor[1] < 2 or prev_coor[0] >= 799:
             return self.get_cone_2d_strided(bin_im)
         return self.search_diag(bin_im, x_prev_pix, y_prev_pix)
 
@@ -220,13 +220,13 @@ class WaypointExtractor:
         x = baseline * x_fish1 / disparity
         y = baseline * y_fish1 / disparity
         z = baseline * 286 / disparity
-        return [z, -x, y] #order of axis and right dimensions
+        return [z, -x, y]  # order of axis and right dimensions
 
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint_1(self, image):
         print("Extract wp 1")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        # current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
         bin_im = self.get_cone_binary(cv_im, threshold=90)
@@ -242,7 +242,7 @@ class WaypointExtractor:
     def extract_waypoint_2(self, image):
         print("Extract wp 2")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        #current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        # current_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                          borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
         bin_im = self.get_cone_binary(cv_im, threshold=90)
@@ -259,11 +259,11 @@ class WaypointExtractor:
     def handle_cor_req(self, req):
         # should also transform last coordinates
         coor = self.get_depth_triang(self.x_1, self.x_2, self.y_1, self.y_2)
-        if coor[0]>1:
-            coor[0] =1
-            coor[1] /=coor[0]
+        if coor[0] > 1:
+            coor[0] = 1
+            coor[1] /= coor[0]
             coor[2] /= coor[0]
-        elif coor[0]< 0:
+        elif coor[0] < 0:
             coor[0] = 0
             coor[1] = 0
             coor[2] = 0
@@ -273,11 +273,10 @@ class WaypointExtractor:
         # TEST DUMMY - REMOVE THIS
         # coor = [0, 3, 4]
         return SendRelCorResponse(coor[0], coor[1], coor[2], self.image_stamp)
-        # return SendRelCorResponse(self.x_orig, self.y_orig, self.z_orig)
-    
+
     def _init_fsm_handshake_srv(self):
-        '''Setup handshake service for FSM.
-        '''
+        """Setup handshake service for FSM.
+        """
         self.fsm_handshake_srv = rospy.Service(
             "/waypoint_extractor_server/fsm_handshake", Trigger, self.fsm_handshake)
 
@@ -285,7 +284,7 @@ class WaypointExtractor:
         '''Handles handshake with FSM. Return that initialization was successful and 
 	waypoint exctractor is running.
         '''
-        return{"success": True, "message": ""}
+        return {"success": True, "message": ""}
 
     def rel_cor_server(self):
         '''Service for delivery of current relative coordinates
@@ -319,35 +318,34 @@ class WaypointExtractor:
         '''
         self.image_subscriber()
         self.rel_cor_server()
-        
+
         while not rospy.is_shutdown():
 
-             if self.image1_buffer and self.image2_buffer:
-                 image1 = self.image1_buffer.pop()
-                 image2 = self.image2_buffer.pop()
+            if self.image1_buffer and self.image2_buffer:
+                image1 = self.image1_buffer.pop()
+                image2 = self.image2_buffer.pop()
 
-                 # Make sure that two processed images belong to same timestamp
-                 while self.image1_buffer and image1.header.stamp > image2.header.stamp:
-                         image1 = self.image1_buffer.pop()
-                 while self.image2_buffer and image1.header.stamp < image2.header.stamp:
-                         image2 = self.image2_buffer.pop()
-                 print("pop")
-                 print(image1.header.stamp.to_sec())
-                 print(image2.header.stamp.to_sec())
+                # Make sure that two processed images belong to same timestamp
+                while self.image1_buffer and image1.header.stamp > image2.header.stamp:
+                    image1 = self.image1_buffer.pop()
+                while self.image2_buffer and image1.header.stamp < image2.header.stamp:
+                    image2 = self.image2_buffer.pop()
+                print("pop")
+                print(image1.header.stamp.to_sec())
+                print(image2.header.stamp.to_sec())
 
-                 self.image1_buffer.clear()
-                 self.image2_buffer.clear()
+                self.image1_buffer.clear()
+                self.image2_buffer.clear()
 
-                 self.extract_waypoint_1(image1)
-                 self.extract_waypoint_2(image2)
-                 self.image_stamp = image1.header.stamp
+                self.extract_waypoint_1(image1)
+                self.extract_waypoint_2(image2)
+                self.image_stamp = image1.header.stamp
 
-             self.rate.sleep()
-                 
+            self.rate.sleep()
+
         # rospy.spin()
 
 
 if __name__ == "__main__":
     waypoint_extractor = WaypointExtractor()
     waypoint_extractor.run()
-
