@@ -35,9 +35,9 @@ class WaypointExtractor:
         self.x = 0
         self.y = 0
         self.z = 0
-        self.x_array_med = [0, 0, 0]
-        self.y_array_med = [0, 0, 0]
-        self.z_array_med = [0, 0, 0]
+        self.x_array_med = [0, 0, 0, 0, 0]
+        self.y_array_med = [0, 0, 0, 0, 0]
+        self.z_array_med = [0, 0, 0, 0, 0]
         self.last_idx = 0
 
         self.rate = rospy.Rate(1000)
@@ -116,7 +116,7 @@ class WaypointExtractor:
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
         bin_im = self.get_cone_binary(rect_image, threshold=150)
-        bin_im[520:848, :] = np.zeros((328, 800))
+        bin_im[520:848, :] = np.zeros((328, 800)) #set the drone frame as zeros. Should not be detected as cone.
 
         # Positioning in 2D of cone parts
         loc_2d = self.get_cone_2d_location(bin_im)
@@ -131,7 +131,7 @@ class WaypointExtractor:
         self.z_array_med[self.last_idx] = coor[2]
         self.z = np.median(self.z_array_med)
         self.last_idx += 1
-        if self.last_idx == 3:
+        if self.last_idx == 5 :
             self.last_idx = 0
     # Handles the service requests.
     def handle_cor_req(self, req):
@@ -207,7 +207,7 @@ class WaypointExtractor:
                 image_coor_1 = self.extract_waypoint(image1)
                 image_coor_2 = self.extract_waypoint(image2)
                 relat_coor = self.get_depth_triang(image_coor_1, image_coor_2)
-                if relat_coor[0] < 5: #only update if in range of 5 meter
+                if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
                     self.update_median(relat_coor)
                 print('Coordinates')
                 print(self.x, self.y, self.z)
