@@ -22,7 +22,7 @@ class CameraVisualiser:
     def __init__(self):
         stime = time.time()
         max_duration = 60
-        while not rospy.has_param('/modified_state_publisher/mode') and time.time() < stime + max_duration:
+        while not rospy.has_param('/waypoint_extractor_server') and time.time() < stime + max_duration:
             time.sleep(0.01)
 
         self._output_path = get_output_path()
