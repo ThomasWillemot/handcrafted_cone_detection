@@ -24,7 +24,7 @@ class WaypointExtractor:
         rospy.init_node('waypoint_extractor_server')
 
         self.bridge = CvBridge()
-        dim = (800, 848)
+        dim = (848, 800)
         k = np.array(
             [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
         d = np.array(
@@ -46,6 +46,8 @@ class WaypointExtractor:
         self.image_stamp = rospy.Time(0)
 
         self._init_fsm_handshake_srv()
+        self.recent_bin_im = np.zeros((1,1))
+
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
     # inputs: image and color of cone
     # output: binary of cone
@@ -57,19 +59,21 @@ class WaypointExtractor:
     def get_cone_2d_location(self, bin_im):
         row_sum = np.sum(bin_im, axis=1)
         i = 0
-        while row_sum[i] > 1 and i < 847:
-            bin_im[i, :] = np.zeros(800)
+        while row_sum[i] > 1 and i < 799:
+            bin_im[i, :] = np.zeros(848)
             i += 1
         row_sum = np.sum(bin_im, axis=1)
         cone_found = False
         cone_row = 0
         max_row = 0
-        row = 847  # start where no drone parts are visible in image
+        row = 799  # start where no drone parts are visible in image
+        cone_started = False
         while not cone_found and row >= 0:
-            if row_sum[row] >= max_row:
+            if row_sum[row] >= max_row and row_sum[row] > 4:
                 cone_row = row
                 max_row = row_sum[row]
-            else:
+                cone_started = True
+            elif cone_started:
                 cone_found = True
             row -= 1
 
@@ -77,7 +81,7 @@ class WaypointExtractor:
         max_start = 0
         max_width = 0
         current_width = 0
-        for col_index in range(799):
+        for col_index in range(847):
             if bin_im[cone_row, col_index] == 0:
                 if current_width > max_width:
                     max_width = current_width
@@ -89,7 +93,7 @@ class WaypointExtractor:
                     current_start = col_index
                 current_width += 1
 
-        return [max_start + int(np.ceil(max_width / 2)) - 400, -cone_row + 424, max_width]
+        return [max_start + int(np.ceil(max_width / 2)) - 424, -cone_row + 400, max_width]
 
     def get_depth_triang(self, im_coor_1, im_coor_2):
         x_fish1 = im_coor_1[0]
@@ -116,13 +120,13 @@ class WaypointExtractor:
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
         bin_im = self.get_cone_binary(rect_image, threshold=150)
-        bin_im[520:848, :] = np.zeros((328, 800)) #set the drone frame as zeros. Should not be detected as cone.
-
+        bin_im[510:848, :] = np.zeros((290, 848)) # set the drone frame as zeros. Should not be detected as cone.
+        self.recent_bin_im = bin_im
         # Positioning in 2D of cone parts
         loc_2d = self.get_cone_2d_location(bin_im)
         return loc_2d
 
-    #update the median filter with length 3
+    # update the median filter with length 3
     def update_median(self, coor):
         self.x_array_med[self.last_idx] = coor[0]
         self.x = np.median(self.x_array_med)
@@ -131,8 +135,9 @@ class WaypointExtractor:
         self.z_array_med[self.last_idx] = coor[2]
         self.z = np.median(self.z_array_med)
         self.last_idx += 1
-        if self.last_idx == 5 :
+        if self.last_idx == 5:
             self.last_idx = 0
+
     # Handles the service requests.
     def handle_cor_req(self, req):
         print("STAMP")
@@ -149,7 +154,7 @@ class WaypointExtractor:
 
     def fsm_handshake(self, _):
         '''Handles handshake with FSM. Return that initialization was successful and 
-	waypoint exctractor is running.
+	    waypoint exctractor is running.
         '''
         return {"success": True, "message": ""}
 
@@ -180,12 +185,20 @@ class WaypointExtractor:
         '''
         self.image2_buffer.append(image)
 
+    def image_publisher(self):
+        pub = rospy.Publisher('binary_images',Image, queue_size=10)
+        rate = rospy.Rate(60)
+        br = CvBridge()
+        while not rospy.is_shutdown():
+            pub.publish(br.cv2_to_imgmsg(self.recent_bin_im))
+            rate.sleep()
+
     def run(self):
         '''Starts all needed functionalities + Main loop
         '''
         self.image_subscriber()
         self.rel_cor_server()
-
+        self.image_publisher()
         while not rospy.is_shutdown():
 
             if self.image1_buffer and self.image2_buffer:
