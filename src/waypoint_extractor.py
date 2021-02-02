@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3.8
 """Extract waypoints out of a single image.
     Has two functionolities
         Image retrieval: calculates 3d location based on an image
@@ -15,6 +15,7 @@ from std_msgs.msg import *
 from geometry_msgs import *
 from std_srvs.srv import Trigger
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
+from handcrafted_cone_detection.msg import ConeImgLoc
 
 
 class WaypointExtractor:
@@ -44,6 +45,7 @@ class WaypointExtractor:
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
+        self.publ_coor_1 = [400,424,5]
 
         self._init_fsm_handshake_srv()
         self.recent_bin_im = np.zeros((1,1))
@@ -120,7 +122,8 @@ class WaypointExtractor:
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
         bin_im = self.get_cone_binary(rect_image, threshold=150)
-        bin_im[510:848, :] = np.zeros((290, 848)) # set the drone frame as zeros. Should not be detected as cone.
+        cut_off = 335
+        bin_im[848 - cut_off:848, :] = np.zeros((cut_off, 800))  # set the drone frame as zeros. Should not be detected as cone.
         self.recent_bin_im = bin_im
         # Positioning in 2D of cone parts
         loc_2d = self.get_cone_2d_location(bin_im)
@@ -186,11 +189,14 @@ class WaypointExtractor:
         self.image2_buffer.append(image)
 
     def image_publisher(self):
-        pub = rospy.Publisher('binary_images',Image, queue_size=10)
+        pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
         rate = rospy.Rate(60)
-        br = CvBridge()
+        cone_coor1 = ConeImgLoc()
+        cone_coor1.x_pos = self.publ_coor_1[0]
+        cone_coor1.y_pos = self.publ_coor_1[1]
+        cone_coor1.cone_width = self.publ_coor_1[2]
         while not rospy.is_shutdown():
-            pub.publish(br.cv2_to_imgmsg(self.recent_bin_im))
+            pub.publish(cone_coor1)
             rate.sleep()
 
     def run(self):
@@ -219,6 +225,7 @@ class WaypointExtractor:
 
                 image_coor_1 = self.extract_waypoint(image1)
                 image_coor_2 = self.extract_waypoint(image2)
+                self.publ_coor_1 = image_coor_1
                 relat_coor = self.get_depth_triang(image_coor_1, image_coor_2)
                 if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
                     self.update_median(relat_coor)

@@ -19,12 +19,18 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS}
                            ${catkin_INCLUDE_DIRS}
                            ${OpenCV_INCLUDE_DIRS}
 )
+## Add the needed messages
+add_message_files(
+  FILES
+  ConeImgLoc.msg
+)
 
 ## Generate services in the 'srv' folder
 add_service_files(
     FILES
     SendRelCor.srv
 )
+
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
