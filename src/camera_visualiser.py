@@ -39,7 +39,7 @@ class CameraVisualiser:
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         resolution = (800, 848)
         frame = np.array(rect_image)
-        frame = cv2.circle(frame, (424+self.x_position, -self.y_position+424-int(self.cone_width)), self.cone_width, 255,5)
+        frame = cv2.circle(frame, (self.x_position, self.y_position), int(self.cone_width/2), 255,5)
         image = Image()
         image.data = frame.astype(np.uint8).flatten().tolist()
         image.height = resolution[0]
