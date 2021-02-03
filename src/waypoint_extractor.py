@@ -45,7 +45,7 @@ class WaypointExtractor:
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
-        #self._init_fsm_handshake_srv()
+        self._init_fsm_handshake_srv()
         self.pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
         self.thresh_pub = rospy.Publisher('threshold_im', Image, queue_size=10)
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
