@@ -4,7 +4,11 @@
         Image retrieval: calculates 3d location based on an image
         Service for the controller which answers with a 3d location
 """
+import os
+from glob import glob
+
 import numpy as np
+import torch
 from cv_bridge import CvBridge
 import rospy
 import cv2
@@ -16,9 +20,23 @@ from geometry_msgs import *
 from std_srvs.srv import Trigger
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 from handcrafted_cone_detection.msg import ConeImgLoc
+import cone_200_architecture
 
+class ArchitectureConfig():
+    architecture: str = 'cone_200_architecture' # name of architecture to be loaded
+    initialisation_type: str = 'xavier'
+    random_seed: int = 123
+    device: str = 'cpu'
+    latent_dim: str = 'default'
+    vae: str = 'default'
+    finetune: bool = False
+    dropout: float = 0.5
+    batch_normalisation: str = 'default'
+    dtype: str = 'default'
+    log_std: str = 'default'
+    output_path = '/media/thomas/Elements/training_nn/jupiter_test_path'
 
-class WaypointExtractor:
+class WaypointEstimatorNN:
 
     def __init__(self):
 
@@ -45,9 +63,18 @@ class WaypointExtractor:
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
+        self.original_model_device = 'default'
         #TODO enable if on drone self._init_fsm_handshake_srv()
         self.pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
         self.thresh_pub = rospy.Publisher('threshold_im', Image, queue_size=10)
+        architecture_config = ArchitectureConfig()
+        self.trainer = None
+        self.environment = None
+        self.epoch = 0
+        self.net = eval('cone_200_architecture').Net(config=architecture_config) \
+            if architecture_config is not None else None
+        self.load_checkpoint('/media/thomas/Elements/training_nn/res_200/6100_lr_0002')
+        self.put_model_on_device('cuda')
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
     # inputs: image and color of cone
     # output: binary of cone
@@ -55,92 +82,92 @@ class WaypointExtractor:
         binary_image = cv2.threshold(current_image, threshold, 255, cv2.ADAPTIVE_THRESH_MEAN_C)
         return binary_image[1]
 
-    # Extract the 2d location in the image after segmentation.
-    def get_cone_2d_location(self, bin_im, left):
-        row_sum = np.sum(bin_im, axis=1)
-        for row_idx in range(799):
-            if row_sum[row_idx] > 400 * 255:
-                airrow = row_idx
-        bin_im[1:airrow, :] = 0
-        i = airrow
-        prev_empty = False
-        while i < 799:
-            curr_empty = row_sum[i] > 255
-            if curr_empty:
-                bin_im[i, :] = np.zeros(848)
-            elif prev_empty:
-                break
-            else:
-                prev_empty = True
-            i += 1
-        row_sum = np.sum(bin_im, axis=1)
-        cone_found = False
-        cone_row = 0
-        max_row = 0
-        row = 799  # start where no drone parts are visible in image
-        cone_started = False
-        while not cone_found and row >= 0:
-            if row_sum[row] >= max_row and row_sum[row] > 4*255:
-                cone_row = row
-                max_row = row_sum[row]
-                cone_started = True
-            elif cone_started:
-                cone_found = True
-            row -= 1
+    def put_model_on_device(self, device: str = None):
+        original_model_device = self.net.get_device()
+        torch.device(device)
 
-        current_start = 0
-        max_start = 0
-        max_width = 0
-        current_width = 0
-        for col_index in range(847):
-            if bin_im[cone_row, col_index] == 0:
-                if current_width > max_width:
-                    max_width = current_width
-                    max_start = current_start
-                current_width = 0
-                current_start = 0
-            else:
-                if current_start == 0:
-                    current_start = col_index
-                current_width += 1
-        if left:
-            self.image_publisher(max_start, cone_row, max_width)
-            self.threshol_image_publish(bin_im, max_start, cone_row, max_width)
-        return [max_start + int(np.ceil(max_width / 2)) - 424, -cone_row + 400, max_width]
+    def put_model_back_to_original_device(self):
+        self.net.set_device(self.original_model_device)
 
-    def get_depth_triang(self, im_coor_1, im_coor_2):
-        x_fish1 = im_coor_1[0]
-        x_fish2 = im_coor_2[0]
-        y_fish1 = im_coor_1[1]
-        y_fish2 = im_coor_2[1]
-        baseline = 0.064  # 6.4mm???
-        disparity = x_fish1 - x_fish2
-        if disparity == 0:
-            disparity = 1
-        x = baseline * x_fish1 / disparity
-        y = baseline * y_fish1 / disparity
-        z = baseline * 286 / disparity
-        x_cor = z
-        y_cor = -x
-        z_cor = y
-        return np.array([x_cor, y_cor, z_cor])
-
+    def downsample_image(self,image, factor=1):
+        img = np.array(image, dtype='float32')
+        img = torch.from_numpy(img.reshape(1, 1, img.shape[0], img.shape[1]))  # Convert grayscale image to tensor
+        maxPool = torch.nn.AvgPool2d(factor)  # 4*4 window, maximum pooling with a step size of 4
+        img_tensor = maxPool(img)
+        #img = torch.squeeze(img)  # Remove the dimension of 1
+        #img = img.numpy().astype('uint8')  # Conversion format, ready to output
+        return img_tensor
     # Extracts the waypoints (3d location) out of the current image.
-    def extract_waypoint(self, image, left):
-        print("Extract wp")
+    def extract_waypoint(self, image):
+        #self.image_publisher(max_start, cone_row, max_width)
+        #self.threshold_image_publish(bin_im, max_start, cone_row, max_width)
+        print("Estimate wp")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-
         rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
-        cut_off = 335
-        rect_image[848 - cut_off:848, :] = 0  # set the drone frame as zeros. Should not be detected as cone.
-
         # Cone segmentation
         bin_im = self.get_cone_binary(rect_image, threshold=self.threshold)
-
+        post_proc_im = self.post_process_image(bin_im)
+        down_tens_image = self.downsample_image(post_proc_im, factor=4)
         # Positioning in 2D of cone parts
-        loc_2d = self.get_cone_2d_location(bin_im, left)
-        return loc_2d
+        cone_coordinates = self.eval_neural_net(down_tens_image)
+        return cone_coordinates
+
+    def eval_neural_net(self, image):
+        predictions = self.net.forward(image, train=False)
+        np_pred = predictions.detach().numpy()
+        return np_pred[0]
+
+    def load_checkpoint(self, checkpoint_dir: str):
+        if not checkpoint_dir.endswith('torch_checkpoints'):
+            checkpoint_dir += '/torch_checkpoints'
+        if len(glob(f'{checkpoint_dir}/*.ckpt')) == 0 and len(glob(f'{checkpoint_dir}/torch_checkpoints/*.ckpt')) == 0:
+            raise FileNotFoundError
+        # Get checkpoint in following order
+        if os.path.isfile(os.path.join(checkpoint_dir, 'checkpoint_best.ckpt')):
+            checkpoint_file = os.path.join(checkpoint_dir, 'checkpoint_best.ckpt')
+        elif os.path.isfile(os.path.join(checkpoint_dir, 'checkpoint_latest.ckpt')):
+            checkpoint_file = os.path.join(checkpoint_dir, 'checkpoint_latest.ckpt')
+        else:
+            checkpoints = {int(f.split('.')[0].split('_')[-1]): os.path.join(checkpoint_dir, f)
+                           for f in os.listdir(checkpoint_dir)}
+            checkpoint_file = checkpoints[max(checkpoints.keys())]
+        # Load params for each experiment element
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device('cpu'))
+        epoch = checkpoint['epoch'] if 'epoch' in checkpoint.keys() else 0
+        for element, key in zip([self.net, self.trainer, self.environment],
+                                ['net_ckpt', 'trainer_ckpt', 'environment_ckpt']):
+            if element is not None and key in checkpoint.keys():
+                element.load_checkpoint(checkpoint[key])
+        print('checkpoint loaded')
+
+    def post_process_image(self, image, binary=False):
+        height = 800
+        width = 848
+        use_frame_mask = True
+        mask_path = '/media/thomas/Elements/Thesis/frame_drone_mask.png'
+        mask = cv2.imread(mask_path, 0)
+        row_sum = np.sum(image, axis=1)  # should be 800 high
+        i = 0
+        while row_sum[i] > 255 and i < height-1:
+            image[i, :] = 0
+            i += 1
+        airrow = 0
+        for row_idx in range(height-1):
+            if row_sum[row_idx] > width/2 * 255:
+                airrow = row_idx
+            if row_sum[row_idx] == 1:
+                image[row_idx, :] = 0
+        image[1:airrow, :] = 0
+        if use_frame_mask:
+            img_masked = cv2.bitwise_and(image, mask)
+        else:
+            img_masked = image
+        image_np_gray = np.asarray(img_masked)
+        image_np = image_np_gray
+        if np.amax(image_np)==255:
+            image_np = image_np/255
+        return image_np
 
     # update the median filter with length 3
     def update_median(self, coor):
@@ -169,7 +196,7 @@ class WaypointExtractor:
             "/waypoint_extractor_server/fsm_handshake", Trigger, self.fsm_handshake)
 
     def fsm_handshake(self, _):
-        '''Handles handshake with FSM. Return that initialization was successful and 
+        '''Handles handshake with FSM. Return that initialization was successful and
 	    waypoint exctractor is running.
         '''
         return {"success": True, "message": ""}
@@ -185,7 +212,6 @@ class WaypointExtractor:
         '''
         # These always come with identical timestamps. Callbacks at slightly offset times.
         rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.fisheye1_callback)
-        rospy.Subscriber("/camera/fisheye2/image_raw", Image, self.fisheye2_callback)
 
     def fisheye1_callback(self, image):
         '''Buffer images coming from /camera/fisheye1/image_raw. Buffer is cleared in run().
@@ -194,14 +220,8 @@ class WaypointExtractor:
         '''
         self.image1_buffer.append(image)
 
-    def fisheye2_callback(self, image):
-        '''Buffer images coming from /camera/fisheye2/image_raw. Buffer is cleared in run().
-        Args:
-            image: std_msgs/Image
-        '''
-        self.image2_buffer.append(image)
 
-    def threshol_image_publish(self,image,max_start,cone_row,max_width):
+    def threshold_image_publish(self, image, max_start, cone_row, max_width):
         resolution = (800, 848)
         frame = np.array(image)
         frame = cv2.circle(frame, (max_start + int(max_width/2), cone_row), int(max_width/2), 255, 5)
@@ -227,26 +247,20 @@ class WaypointExtractor:
         self.rel_cor_server()
 
         while not rospy.is_shutdown():
-            if self.image1_buffer and self.image2_buffer:
+            if self.image1_buffer:
                 image1 = self.image1_buffer.pop()
-                image2 = self.image2_buffer.pop()
-
-                # Make sure that two processed images belong to same timestamp
-                while self.image1_buffer and image1.header.stamp > image2.header.stamp:
-                    image1 = self.image1_buffer.pop()
-                while self.image2_buffer and image1.header.stamp < image2.header.stamp:
-                    image2 = self.image2_buffer.pop()
+                # TODO only one image!
+                #  Make sure that two processed images belong to same timestamp
+                #while self.image1_buffer and image1.header.stamp > image2.header.stamp:
+                #    image1 = self.image1_buffer.pop()
                 print("pop")
                 print(image1.header.stamp.to_sec())
-                print(image2.header.stamp.to_sec())
 
                 self.image1_buffer.clear()
                 self.image2_buffer.clear()
 
-                image_coor_1 = self.extract_waypoint(image1, 1)
-                image_coor_2 = self.extract_waypoint(image2, 0)
+                relat_coor = self.extract_waypoint(image1)
 
-                relat_coor = self.get_depth_triang(image_coor_1, image_coor_2)
                 if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
                     self.update_median(relat_coor)
                 print('Coordinates')
@@ -259,5 +273,5 @@ class WaypointExtractor:
 
 
 if __name__ == "__main__":
-    waypoint_extractor = WaypointExtractor()
-    waypoint_extractor.run()
+    waypoint_estimator_nn = WaypointEstimatorNN()
+    waypoint_estimator_nn.run()

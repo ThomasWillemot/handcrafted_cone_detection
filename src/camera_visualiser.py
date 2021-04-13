@@ -27,6 +27,7 @@ class CameraVisualiser:
                                           Image, queue_size=10)
 
         rospy.init_node('camera_visualiser')
+        print("Initialised node")
 
     def save_last_2d_coor(self, data):
         self.x_position = data.x_pos
@@ -39,7 +40,7 @@ class CameraVisualiser:
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         resolution = (800, 848)
         frame = np.array(rect_image)
-        frame = cv2.circle(frame, (self.x_position, self.y_position), int(self.cone_width/2), 255,5)
+        frame = cv2.circle(frame, (self.x_position, self.y_position), int(self.cone_width/2), 255, 5)
         image = Image()
         image.data = frame.astype(np.uint8).flatten().tolist()
         image.height = resolution[0]
