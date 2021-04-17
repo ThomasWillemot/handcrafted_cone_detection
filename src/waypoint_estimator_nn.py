@@ -20,21 +20,9 @@ from geometry_msgs import *
 from std_srvs.srv import Trigger
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 from handcrafted_cone_detection.msg import ConeImgLoc
-import cone_200_architecture
+from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files import cnn_architecture
+from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files.ArchitectureConfig import ArchitectureConfig
 
-class ArchitectureConfig():
-    architecture: str = 'cone_200_architecture' # name of architecture to be loaded
-    initialisation_type: str = 'xavier'
-    random_seed: int = 123
-    device: str = 'cpu'
-    latent_dim: str = 'default'
-    vae: str = 'default'
-    finetune: bool = False
-    dropout: float = 0.5
-    batch_normalisation: str = 'default'
-    dtype: str = 'default'
-    log_std: str = 'default'
-    output_path = '/media/thomas/Elements/training_nn/jupiter_test_path'
 
 class WaypointEstimatorNN:
 
@@ -43,13 +31,14 @@ class WaypointEstimatorNN:
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
         dim = (848, 800)
-        self.threshold = 180
+        self.threshold = 100  # TODO
         k = np.array(
             [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
         d = np.array(
             [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
         self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
                                                                    cv2.CV_16SC2)
+        self.mask = cv2.imread('/media/thomas/Elements/Thesis/frame_drone_mask.png', 0)
         self.counter = 0
         self.x = 0
         self.y = 0
@@ -58,7 +47,7 @@ class WaypointEstimatorNN:
         self.y_array_med = [0, 0, 0, 0, 0]
         self.z_array_med = [0, 0, 0, 0, 0]
         self.last_idx = 0
-
+        self.kernel = np.ones((3, 3), np.uint8)
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
         self.image2_buffer = []
@@ -71,7 +60,7 @@ class WaypointEstimatorNN:
         self.trainer = None
         self.environment = None
         self.epoch = 0
-        self.net = eval('cone_200_architecture').Net(config=architecture_config) \
+        self.net = eval('cnn_architecture').Net(config=architecture_config) \
             if architecture_config is not None else None
         self.load_checkpoint('/media/thomas/Elements/training_nn/res_200/6100_lr_0002')
         self.put_model_on_device('cuda')
@@ -99,8 +88,6 @@ class WaypointEstimatorNN:
         return img_tensor
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint(self, image):
-        #self.image_publisher(max_start, cone_row, max_width)
-        #self.threshold_image_publish(bin_im, max_start, cone_row, max_width)
         print("Estimate wp")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
@@ -111,6 +98,12 @@ class WaypointEstimatorNN:
         down_tens_image = self.downsample_image(post_proc_im, factor=4)
         # Positioning in 2D of cone parts
         cone_coordinates = self.eval_neural_net(down_tens_image)
+        # Use scaling factor ( neural net is trained in other way than images are.
+        cone_coordinates /= 1.6
+        x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 286 + 418)
+        y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 286 + 405)
+        self.image_publisher(x_position, y_position, 50/cone_coordinates[2])
+        self.threshold_image_publish(post_proc_im*255, x_position, y_position, 50/cone_coordinates[0])
         return cone_coordinates
 
     def eval_neural_net(self, image):
@@ -144,30 +137,30 @@ class WaypointEstimatorNN:
     def post_process_image(self, image, binary=False):
         height = 800
         width = 848
-        use_frame_mask = True
-        mask_path = '/media/thomas/Elements/Thesis/frame_drone_mask.png'
-        mask = cv2.imread(mask_path, 0)
         row_sum = np.sum(image, axis=1)  # should be 800 high
-        i = 0
-        while row_sum[i] > 255 and i < height-1:
-            image[i, :] = 0
-            i += 1
+
         airrow = 0
-        for row_idx in range(height-1):
-            if row_sum[row_idx] > width/2 * 255:
+        for row_idx in range(799):
+            if row_sum[row_idx] > 400 * 255:
                 airrow = row_idx
-            if row_sum[row_idx] == 1:
-                image[row_idx, :] = 0
-        image[1:airrow, :] = 0
-        if use_frame_mask:
-            img_masked = cv2.bitwise_and(image, mask)
-        else:
-            img_masked = image
+        image[0:airrow, :] = 0
+        i = airrow
+        prev_empty = False
+        while i < 799:
+            curr_empty = row_sum[i] > 255
+            if curr_empty:
+                image[i, :] = np.zeros(848)
+            elif prev_empty:
+                break
+            else:
+                prev_empty = True
+            i += 1
+        img_masked = cv2.bitwise_and(image, self.mask)
         image_np_gray = np.asarray(img_masked)
-        image_np = image_np_gray
-        if np.amax(image_np)==255:
-            image_np = image_np/255
-        return image_np
+        if np.amax(image_np_gray) == 255:
+            image_np_gray = image_np_gray/255
+        filtered_np_gray = cv2.morphologyEx(image_np_gray, cv2.MORPH_OPEN, self.kernel)
+        return filtered_np_gray
 
     # update the median filter with length 3
     def update_median(self, coor):
@@ -220,11 +213,17 @@ class WaypointEstimatorNN:
         '''
         self.image1_buffer.append(image)
 
-
+    '''Augments the grayscale or binary image
+    Args:
+        image: bin numpy image
+        max_start: image coordinate u for the circle
+        cone_row: image coordinate v for the circle
+        max_width: width of the circle
+    '''
     def threshold_image_publish(self, image, max_start, cone_row, max_width):
         resolution = (800, 848)
         frame = np.array(image)
-        frame = cv2.circle(frame, (max_start + int(max_width/2), cone_row), int(max_width/2), 255, 5)
+        frame = cv2.circle(frame, (max_start + int(max_width/2), cone_row), int(max(max_width, 2)/2), 255, 2)
         image = Image()
         image.data = frame.astype(np.uint8).flatten().tolist()
         image.height = resolution[0]

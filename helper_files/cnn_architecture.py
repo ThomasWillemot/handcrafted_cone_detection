@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from src.ai.base_net import BaseNet, ArchitectureConfig
+from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files.local_base_net import Local_Base_Net,ArchitectureConfig
 from src.ai.utils import mlp_creator
 from src.core.data_types import Action
 from src.core.logger import get_logger, cprint
@@ -15,7 +15,7 @@ Expects 1*848*800 inputs and outputs 6c
 """
 
 
-class Net(BaseNet):
+class Net(Local_Base_Net):
 
     def __init__(self, config: ArchitectureConfig, quiet: bool = False):
         super().__init__(config=config, quiet=True)
@@ -55,7 +55,8 @@ class Net(BaseNet):
                                    activation=nn.ReLU(),
                                    output_activation=nn.Identity(),
                                    bias_in_last_layer=False)
-        self.initialize_architecture()
+        #dont neet init, we use checkpoint
+        #self.initialize_architecture()
 
 
     def forward(self, inputs, train: bool = False) -> torch.Tensor:
