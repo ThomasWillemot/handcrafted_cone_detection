@@ -31,7 +31,7 @@ class WaypointEstimatorNN:
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
         dim = (848, 800)
-        self.threshold = 100  # TODO
+        self.threshold = 95  # TODO
         k = np.array(
             [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
         d = np.array(
@@ -52,6 +52,7 @@ class WaypointEstimatorNN:
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
+        self.running_average = np.array([0, 0, 0, 0, 0, 0])
         self.original_model_device = 'default'
         #TODO enable if on drone self._init_fsm_handshake_srv()
         self.pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
@@ -99,11 +100,16 @@ class WaypointEstimatorNN:
         # Positioning in 2D of cone parts
         cone_coordinates = self.eval_neural_net(down_tens_image)
         # Use scaling factor ( neural net is trained in other way than images are.
-        cone_coordinates /= 1.6
+        cone_coordinates[0] /= 1.6
+        cone_coordinates[3] /= 1.6
+        self.running_average = self.running_average*0.65+cone_coordinates*0.35
+        cone_coordinates = self.running_average
         x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 286 + 418)
         y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 286 + 405)
-        self.image_publisher(x_position, y_position, 50/cone_coordinates[2])
-        self.threshold_image_publish(post_proc_im*255, x_position, y_position, 50/cone_coordinates[0])
+        x_2_position = int(-cone_coordinates[4] / cone_coordinates[3] * 286 + 418)
+        y_2_position = int(-cone_coordinates[5] / cone_coordinates[3] * 286 + 405)
+        self.image_publisher(x_position, y_position, 50/cone_coordinates[0])
+        self.threshold_image_publish(bin_im, x_position, y_position, 50/cone_coordinates[0], x_2=x_2_position,y_2=y_2_position,size_2=50/cone_coordinates[3])
         return cone_coordinates
 
     def eval_neural_net(self, image):
@@ -180,7 +186,7 @@ class WaypointEstimatorNN:
         print(self.image_stamp)
         # TEST DUMMY - REMOVE THIS
         # coor = [0, 3, 4]
-        return SendRelCorResponse(self.x, self.y, self.z, self.image_stamp)
+        return SendRelCorResponse(self.running_average[0],self.running_average[1],self.running_average[2],self.running_average[3],self.running_average[4],self.running_average[5], self.image_stamp)
 
     def _init_fsm_handshake_srv(self):
         """Setup handshake service for FSM.
@@ -220,10 +226,11 @@ class WaypointEstimatorNN:
         cone_row: image coordinate v for the circle
         max_width: width of the circle
     '''
-    def threshold_image_publish(self, image, max_start, cone_row, max_width):
+    def threshold_image_publish(self, image, x, y, size, x_2, y_2, size_2):
         resolution = (800, 848)
         frame = np.array(image)
-        frame = cv2.circle(frame, (max_start + int(max_width/2), cone_row), int(max(max_width, 2)/2), 255, 2)
+        frame = cv2.circle(frame, (x, y), int(max(size, 2)/2), 255, 2)
+        frame = cv2.circle(frame, (x_2, y_2), int(max(size_2, 2) / 2), 255, 2)
         image = Image()
         image.data = frame.astype(np.uint8).flatten().tolist()
         image.height = resolution[0]
@@ -234,9 +241,9 @@ class WaypointEstimatorNN:
 
     def image_publisher(self, x_coor, y_coor, width):
         cone_coor1 = ConeImgLoc()
-        cone_coor1.x_pos = np.int32(x_coor+int(width/2))
+        cone_coor1.x_pos = np.int32(x_coor)
         cone_coor1.y_pos = np.int32(y_coor)
-        cone_coor1.cone_width = np.int16(width)
+        cone_coor1.cone_width = np.int16(int(max(width, 2)))
         self.pub.publish(cone_coor1)
 
     def run(self):

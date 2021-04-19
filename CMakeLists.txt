@@ -5,7 +5,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  #cv_bridge
+  cv_bridge #was commented out
   sensor_msgs
   geometry_msgs
   nav_msgs
@@ -52,8 +52,6 @@ include_directories(
 
 catkin_install_python(PROGRAMS
   src/waypoint_extractor.py
+  src/waypoint_estimator_nn.py
   src/camera_visualiser.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-
-
-
