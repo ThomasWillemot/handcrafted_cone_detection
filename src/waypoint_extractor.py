@@ -36,6 +36,8 @@ class WaypointExtractor:
         self.x = 0
         self.y = 0
         self.z = 0
+        self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
+        self.kernel = np.ones((3, 3), np.uint8)
         self.x_array_med = [0, 0, 0, 0, 0]
         self.y_array_med = [0, 0, 0, 0, 0]
         self.z_array_med = [0, 0, 0, 0, 0]
@@ -74,7 +76,9 @@ class WaypointExtractor:
             else:
                 prev_empty = True
             i += 1
-        row_sum = np.sum(bin_im, axis=1)
+        filtered_np_gray = cv2.morphologyEx(bin_im, cv2.MORPH_OPEN, self.kernel)
+        img_masked = cv2.bitwise_and(filtered_np_gray, self.mask)
+        row_sum = np.sum(img_masked, axis=1)
         cone_found = False
         cone_row = 0
         max_row = 0
@@ -94,7 +98,7 @@ class WaypointExtractor:
         max_width = 0
         current_width = 0
         for col_index in range(847):
-            if bin_im[cone_row, col_index] == 0:
+            if img_masked[cone_row, col_index] == 0:
                 if current_width > max_width:
                     max_width = current_width
                     max_start = current_start

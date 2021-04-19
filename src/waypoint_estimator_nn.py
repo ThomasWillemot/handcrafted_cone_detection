@@ -31,14 +31,16 @@ class WaypointEstimatorNN:
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
         dim = (848, 800)
-        self.threshold = 95  # TODO
+        self.threshold = 95  # TODO change if needed using rviz (check images)
         k = np.array(
             [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
         d = np.array(
             [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
         self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
                                                                    cv2.CV_16SC2)
-        self.mask = cv2.imread('/media/thomas/Elements/Thesis/frame_drone_mask.png', 0)
+        self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
+        #TODO change path of mask
+        print(self.mask.shape)
         self.counter = 0
         self.x = 0
         self.y = 0
@@ -255,10 +257,6 @@ class WaypointEstimatorNN:
         while not rospy.is_shutdown():
             if self.image1_buffer:
                 image1 = self.image1_buffer.pop()
-                # TODO only one image!
-                #  Make sure that two processed images belong to same timestamp
-                #while self.image1_buffer and image1.header.stamp > image2.header.stamp:
-                #    image1 = self.image1_buffer.pop()
                 print("pop")
                 print(image1.header.stamp.to_sec())
 
