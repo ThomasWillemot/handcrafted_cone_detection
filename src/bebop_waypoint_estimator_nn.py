@@ -31,8 +31,9 @@ class WaypointEstimatorNN:
 
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
-        dim = (848, 800)
-        self.threshold = 95  # TODO change if needed using rviz (check images)
+        dim = (848, 800) # TODO
+        self.threshold = 220 # TODO change if needed using rviz (check images)
+        # TODO !
         k = np.array(
             [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
         d = np.array(
@@ -91,6 +92,11 @@ class WaypointEstimatorNN:
         #img = torch.squeeze(img)  # Remove the dimension of 1
         #img = img.numpy().astype('uint8')  # Conversion format, ready to output
         return img_tensor
+
+    def crop_image(self, image, dimensions):
+        orig_shape = image.shape
+        return image[int(orig_shape[0]-dimensions[0]/2):int(orig_shape[0]+dimensions[0]/2),int(orig_shape[1]-dimensions[1]/2):int(orig_shape[1]+dimensions[1]/2)]
+
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint(self, image):
         print("Estimate wp")
@@ -98,20 +104,21 @@ class WaypointEstimatorNN:
         rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
                                borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
         # Cone segmentation
-        bin_im = self.get_cone_binary(rect_image, threshold=self.threshold)
-        post_proc_im = self.post_process_image(bin_im)
-        down_tens_image = self.downsample_image(post_proc_im, factor=4)
+        bin_im = self.get_cone_binary(rect_image[:, :, 0], threshold=self.threshold)
+        filtered_np_gray = cv2.morphologyEx(bin_im, cv2.MORPH_OPEN, self.kernel)
+        post_proc_im = self.post_process_image(filtered_np_gray)
+        down_tens_image = self.downsample_image(post_proc_im, factor=4)  # TODO
         # Positioning in 2D of cone parts
         cone_coordinates = self.eval_neural_net(down_tens_image)
         # Use scaling factor ( neural net is trained in other way than images are.
-        cone_coordinates[0] /= 1.6
-        cone_coordinates[3] /= 1.6
+        #cone_coordinates[0] /= 1.6 # TODO
+        #cone_coordinates[3] /= 1.6 # TODO
         self.running_average = self.running_average*0.65+cone_coordinates*0.35
         cone_coordinates = self.running_average
-        x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 286 + 418)
-        y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 286 + 405)
-        x_2_position = int(-cone_coordinates[4] / cone_coordinates[3] * 286 + 418)
-        y_2_position = int(-cone_coordinates[5] / cone_coordinates[3] * 286 + 405)
+        x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 286 + 418)  # TODO
+        y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 286 + 405)  # TODO
+        x_2_position = int(-cone_coordinates[4] / cone_coordinates[3] * 286 + 418)  # TODO
+        y_2_position = int(-cone_coordinates[5] / cone_coordinates[3] * 286 + 405)  # TODO
         self.image_publisher(x_position, y_position, 50/cone_coordinates[0])
         self.threshold_image_publish(bin_im, x_position, y_position, 50/cone_coordinates[0], x_2=x_2_position,y_2=y_2_position,size_2=50/cone_coordinates[3])
         return cone_coordinates
@@ -145,21 +152,21 @@ class WaypointEstimatorNN:
         print('checkpoint loaded')
 
     def post_process_image(self, image, binary=False):
-        height = 800
+        height = 800 #TODO
         width = 848
         row_sum = np.sum(image, axis=1)  # should be 800 high
 
         airrow = 0
         for row_idx in range(799):
-            if row_sum[row_idx] > 400 * 255:
+            if row_sum[row_idx] > height/2 * 255: #TODO
                 airrow = row_idx
         image[0:airrow, :] = 0
         i = airrow
         prev_empty = False
-        while i < 799:
+        while i < height-1:
             curr_empty = row_sum[i] > 255
             if curr_empty:
-                image[i, :] = np.zeros(848)
+                image[i, :] = 0
             elif prev_empty:
                 break
             else:
@@ -169,8 +176,7 @@ class WaypointEstimatorNN:
         image_np_gray = np.asarray(img_masked)
         if np.amax(image_np_gray) == 255:
             image_np_gray = image_np_gray/255
-        filtered_np_gray = cv2.morphologyEx(image_np_gray, cv2.MORPH_OPEN, self.kernel)
-        return filtered_np_gray
+        return image_np_gray
 
     # update the median filter with length 3
     def update_median(self, coor):
@@ -250,14 +256,8 @@ class WaypointEstimatorNN:
         cone_coor1.cone_width = np.int16(int(max(width, 2)))
         self.pub.publish(cone_coor1)
 
-    def reference_publisher(self):
-        ref = PointStamped
-        ref.header =
-        point = Point
-        Point.x = self.x
-        Point.y = self.y
-        Point.z = self.z
-        ref.point = point
+    def publish_reference(self, coordinates):
+        ref = PointStamped(header=Header(frame_id="agent"), point=Point(x=coordinates[0], y=self.coordinates[1], z=self.coordinates[2]))
         self.reference_publisher.publish(ref)
 
     def run(self):
@@ -276,7 +276,7 @@ class WaypointEstimatorNN:
                 self.image2_buffer.clear()
 
                 relat_coor = self.extract_waypoint(image1)
-
+                self.publish_reference()
                 if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
                     self.update_median(relat_coor)
                 print('Coordinates')
