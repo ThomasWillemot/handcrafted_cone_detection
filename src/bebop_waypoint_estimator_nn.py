@@ -31,18 +31,17 @@ class WaypointEstimatorNN:
 
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
-        dim = (848, 800) # TODO
-        self.threshold = 220 # TODO change if needed using rviz (check images)
+        dim = (848, 800)  # TODO
+        self.threshold = 220  # TODO change if needed using rviz (check images)
         # TODO !
-        k = np.array(
-            [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
-        d = np.array(
-            [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
-        self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
-                                                                   cv2.CV_16SC2)
-        self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
+        #k = np.array(
+        #    [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
+        #d = np.array(
+        #    [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
+        #self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
+        #                                                           cv2.CV_16SC2)
+        #self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
         #TODO change path of mask
-        print(self.mask.shape)
         self.counter = 0
         self.x = 0
         self.y = 0
@@ -60,7 +59,7 @@ class WaypointEstimatorNN:
         self.original_model_device = 'default'
         #TODO enable if on drone self._init_fsm_handshake_srv()
         self.pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
-        self.waypoint_publisher = rospy.Publisher('reference_pose', PointStamped, queue_size=10)
+        self.reference_publisher = rospy.Publisher('reference_pose', PointStamped, queue_size=10)
         self.thresh_pub = rospy.Publisher('threshold_im', Image, queue_size=10)
         architecture_config = ArchitectureConfig()
         self.trainer = None
@@ -101,10 +100,10 @@ class WaypointEstimatorNN:
     def extract_waypoint(self, image):
         print("Estimate wp")
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
-                               borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture
+        #rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        #                       borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture #TODO
         # Cone segmentation
-        bin_im = self.get_cone_binary(rect_image[:, :, 0], threshold=self.threshold)
+        bin_im = self.get_cone_binary(cv_im[:, :, 0], threshold=self.threshold)
         filtered_np_gray = cv2.morphologyEx(bin_im, cv2.MORPH_OPEN, self.kernel)
         post_proc_im = self.post_process_image(filtered_np_gray)
         down_tens_image = self.downsample_image(post_proc_im, factor=4)  # TODO
@@ -152,12 +151,11 @@ class WaypointEstimatorNN:
         print('checkpoint loaded')
 
     def post_process_image(self, image, binary=False):
-        height = 800 #TODO
-        width = 848
+        height = 480 #TODO
+        width = 856
         row_sum = np.sum(image, axis=1)  # should be 800 high
-
         airrow = 0
-        for row_idx in range(799):
+        for row_idx in range(height):
             if row_sum[row_idx] > height/2 * 255: #TODO
                 airrow = row_idx
         image[0:airrow, :] = 0
@@ -172,8 +170,8 @@ class WaypointEstimatorNN:
             else:
                 prev_empty = True
             i += 1
-        img_masked = cv2.bitwise_and(image, self.mask)
-        image_np_gray = np.asarray(img_masked)
+        #img_masked = cv2.bitwise_and(image, self.mask)
+        image_np_gray = np.asarray(image)
         if np.amax(image_np_gray) == 255:
             image_np_gray = image_np_gray/255
         return image_np_gray
@@ -220,7 +218,7 @@ class WaypointEstimatorNN:
         '''Subscribes to topics and and runs callbacks
         '''
         # These always come with identical timestamps. Callbacks at slightly offset times.
-        rospy.Subscriber("/camera/fisheye1/image_raw", Image, self.fisheye1_callback)
+        rospy.Subscriber("/bebop/image_raw", Image, self.fisheye1_callback)
 
     def fisheye1_callback(self, image):
         '''Buffer images coming from /camera/fisheye1/image_raw. Buffer is cleared in run().
@@ -237,7 +235,7 @@ class WaypointEstimatorNN:
         max_width: width of the circle
     '''
     def threshold_image_publish(self, image, x, y, size, x_2, y_2, size_2):
-        resolution = (800, 848)
+        resolution = image.shape
         frame = np.array(image)
         frame = cv2.circle(frame, (x, y), int(max(size, 2)/2), 255, 2)
         frame = cv2.circle(frame, (x_2, y_2), int(max(size_2, 2) / 2), 255, 2)
@@ -249,6 +247,7 @@ class WaypointEstimatorNN:
         image.step = resolution[1]
         self.thresh_pub.publish(image)
 
+    # publishes coordiantes.
     def image_publisher(self, x_coor, y_coor, width):
         cone_coor1 = ConeImgLoc()
         cone_coor1.x_pos = np.int32(x_coor)
@@ -256,8 +255,10 @@ class WaypointEstimatorNN:
         cone_coor1.cone_width = np.int16(int(max(width, 2)))
         self.pub.publish(cone_coor1)
 
+    # Publish the drone location with an offset height.
     def publish_reference(self, coordinates):
-        ref = PointStamped(header=Header(frame_id="agent"), point=Point(x=coordinates[0], y=self.coordinates[1], z=self.coordinates[2]))
+        offset_height = 1
+        ref = PointStamped(header=Header(frame_id="agent"), point=Point(x=coordinates[0], y=coordinates[1], z=coordinates[2]+offset_height))
         self.reference_publisher.publish(ref)
 
     def run(self):
@@ -276,7 +277,7 @@ class WaypointEstimatorNN:
                 self.image2_buffer.clear()
 
                 relat_coor = self.extract_waypoint(image1)
-                self.publish_reference()
+                self.publish_reference(relat_coor)
                 if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
                     self.update_median(relat_coor)
                 print('Coordinates')
