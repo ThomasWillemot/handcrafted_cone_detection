@@ -11,7 +11,7 @@ from src.core.utils import get_filename_without_extension
 
 """
 Tiny four encoding and three decoding layers with dropout.
-Expects 1*848*800 inputs and outputs 6c 
+Expects 1*200*200 inputs and outputs 6c 
 """
 
 
@@ -31,9 +31,9 @@ class Net(Local_Base_Net):
         self.batch_normalisation = config.batch_normalisation if isinstance(config.batch_normalisation, bool) \
             else False
         self.encoder = nn.Sequential(
-            nn.Conv2d(1, 12, 3, stride=2,padding=2),
+            nn.Conv2d(1, 12, 3, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv2d(12, 12, 3, stride=2,padding=2),
+            nn.Conv2d(12, 12, 3, stride=2, padding=2),
             nn.ReLU(),
             nn.Conv2d(12, 12, 3, stride=2, padding=2),
             nn.ReLU(),
@@ -47,15 +47,12 @@ class Net(Local_Base_Net):
             nn.ReLU(),
             nn.Conv2d(64, 64, 3, stride=2, padding=2),
             nn.ReLU(),
-
-
-
         )
         self.decoder = mlp_creator(sizes=[576, 64, self.output_size[0]],
                                    activation=nn.ReLU(),
                                    output_activation=nn.Identity(),
                                    bias_in_last_layer=False)
-        #dont neet init, we use checkpoint
+        #dont need init, we use checkpoint
         #self.initialize_architecture()
 
 
