@@ -24,14 +24,14 @@ class WaypointExtractor:
 
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
-        dim = (848, 800)
+        #dim = (848, 800)
         self.threshold = 95
-        k = np.array(
-            [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
-        d = np.array(
-            [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
-        self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
-                                                                   cv2.CV_16SC2)
+        #k = np.array(
+        #    [[285.95001220703125, 0.0, 418.948486328125], [0.0, 286.0592956542969, 405.756103515625], [0.0, 0.0, 1.0]])
+        #d = np.array(
+        #    [[-0.006003059912472963], [0.04132957011461258], [-0.038822319358587265], [0.006561396177858114]])
+        #self.map1, self.map2 = cv2.fisheye.initUndistortRectifyMap(k, d, np.eye(3), k, dim,
+        #                                                           cv2.CV_16SC2)
         self.counter = 0
         self.x = 0
         self.y = 0
@@ -234,28 +234,17 @@ class WaypointExtractor:
         while not rospy.is_shutdown():
             if self.image1_buffer and self.image2_buffer:
                 image1 = self.image1_buffer.pop()
-                image2 = self.image2_buffer.pop()
-
-                # Make sure that two processed images belong to same timestamp
-                while self.image1_buffer and image1.header.stamp > image2.header.stamp:
-                    image1 = self.image1_buffer.pop()
-                while self.image2_buffer and image1.header.stamp < image2.header.stamp:
-                    image2 = self.image2_buffer.pop()
-                print("pop")
-                print(image1.header.stamp.to_sec())
-                print(image2.header.stamp.to_sec())
+                # print("pop")
+                # print(image1.header.stamp.to_sec())
 
                 self.image1_buffer.clear()
                 self.image2_buffer.clear()
 
-                image_coor_1 = self.extract_waypoint(image1, 1)
-                image_coor_2 = self.extract_waypoint(image2, 0)
-
-                relat_coor = self.get_depth_triang(image_coor_1, image_coor_2)
-                if 5 > relat_coor[0] > 0:  # only update if in range of 5 meter
-                    self.update_median(relat_coor)
+                relat_coor = self.extract_waypoint(image1)
                 print('Coordinates')
-                print(self.x, self.y, self.z)
+                print(round(self.running_average[0], 2), round(self.running_average[1], 2),
+                      round(self.running_average[2], 2))
+                self.publish_reference(self.running_average)
                 self.image_stamp = image1.header.stamp
 
             self.rate.sleep()

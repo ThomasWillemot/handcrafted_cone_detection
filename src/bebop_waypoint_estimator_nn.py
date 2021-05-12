@@ -31,6 +31,7 @@ class WaypointEstimatorNN:
     def __init__(self, safe_flight=True):
         rospy.init_node('waypoint_extractor_server')
         self.bridge = CvBridge()
+        self.total_time = time.time()
         dim = (856, 480)
         self.safe_flight = safe_flight
         self.threshold = 210  # TODO change if needed using rviz (check images)
@@ -43,7 +44,7 @@ class WaypointEstimatorNN:
         # TODO change path of mask
         self.counter = 0
 
-        self.kernel = np.ones((3, 3), np.uint8)
+        self.kernel = np.ones((7, 7), np.uint8)
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
         self.image2_buffer = []
@@ -90,7 +91,6 @@ class WaypointEstimatorNN:
     def extend_image(self, image, dimensions):
         empty_image = np.zeros(dimensions)
         orig_shape = image.shape
-        print(empty_image.shape)
         extended_im = empty_image[int(dimensions[0] / 2 - orig_shape[0] / 2):int(dimensions[0] / 2 + orig_shape[0] / 2),
                       :] = image[:,4:852]
         return extended_im
@@ -116,26 +116,25 @@ class WaypointEstimatorNN:
         # Positioning in 2D of cone parts
         cone_coordinates = self.eval_neural_net(down_tens_image)
         # Use scaling factor ( neural net is trained in other way than images are.
-        cone_coordinates[0] *= 1.4  # TODO
-        cone_coordinates[1] *= 1.4  # TODO
-        cone_coordinates[3] *= 1.4  # TODO
-        cone_coordinates[4] *= 1.4  # TODO
-        if bin_im_sum > 400 * 400:
-            print("not used")
-            cone_coordinates = np.array([0, 0, 0, 0, 0, 0])
-            self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
-            cone_coordinates = self.running_average
+        cone_coordinates *= .8
+        #if bin_im_sum > 400 * 400:
+        #    print("not used")
+        #    cone_coordinates = np.array([0, 0, 0, 0, 0, 0])
+        #    self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
+        #    cone_coordinates = self.running_average
+        if False:
+            k = k+1
         else:
             x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 539 + 427)  # TODO
             y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 527 + 240)  # TODO
             x_2_position = int(-cone_coordinates[4] / cone_coordinates[3] * 539 + 427)  # TODO
             y_2_position = int(-cone_coordinates[5] / cone_coordinates[3] * 529 + 239)  # TODO
             #cone_coordinates[0] -= 2.5
-            self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
+            self.running_average = cone_coordinates #self.running_average * 0.65 + cone_coordinates * 0.35
             cone_coordinates = self.running_average
-            self.image_publisher(x_position, y_position, 50 / cone_coordinates[0])
-            self.threshold_image_publish(cv_im, x_position, y_position, 50 / 2, x_2=x_2_position, y_2=y_2_position,
-                                         size_2=50 / cone_coordinates[3])
+            self.image_publisher(x_position, y_position, 25 / cone_coordinates[0])
+            self.threshold_image_publish(cv_im, x_position, y_position, 150 / 2, x_2=x_2_position, y_2=y_2_position,
+                                         size_2=150 / cone_coordinates[3])
         self.bin_im_publish(255*img)
         return cone_coordinates
 
@@ -197,13 +196,13 @@ class WaypointEstimatorNN:
         row_sum = np.sum(image, axis=1)  # should be 800 high
         airrow = 0
         for row_idx in range(height):
-            if row_sum[row_idx] > height / 2 * 255:  # TODO
+            if row_sum[row_idx] > height / 2 * 1:  # TODO
                 airrow = row_idx
         image[0:airrow, :] = 0
         i = airrow
         prev_empty = False
         while i < height - 1:
-            curr_empty = row_sum[i] > 4 * 255
+            curr_empty = row_sum[i] > 4 * 1
             if curr_empty:
                 image[i, :] = 0
             elif prev_empty:
@@ -299,12 +298,11 @@ class WaypointEstimatorNN:
 
     # Publish the drone location with an offset height.
     def publish_reference(self, coordinates):
-        cam_angle = np.pi/4
+        cam_angle = 2*np.pi/360*15
         if self.safe_flight:
             coordinates = coordinates
         x_glob = coordinates[0]*np.cos(cam_angle) + coordinates[2]*np.sin(cam_angle)
-        z_glob = -coordinates[0]*np.sin(cam_angle) + coordinates[2]*np.cos(cam_angle) +2
-        z_glob = 0
+        z_glob = -coordinates[0]*np.sin(cam_angle) + coordinates[2]*np.cos(cam_angle) -1.5
         ref = PointStamped(header=Header(frame_id="agent"),
                            point=Point(x=x_glob, y=coordinates[1], z=z_glob))
         self.reference_publisher.publish(ref)
@@ -325,17 +323,20 @@ class WaypointEstimatorNN:
                 self.image2_buffer.clear()
 
                 relat_coor = self.extract_waypoint(image1)
-                print('Coordinates')
-                print(round(self.running_average[0], 2), round(self.running_average[1], 2),
-                      round(self.running_average[2], 2))
-                self.publish_reference(self.running_average)
-                self.image_stamp = image1.header.stamp
 
+                if time.time() - self.total_time > 10:
+                    print('Coordinates')
+                    print(round(self.running_average[0], 2), round(self.running_average[1], 2),
+                          round(self.running_average[2], 2))
+
+                    self.publish_reference(self.running_average)
+                    self.image_stamp = image1.header.stamp
+                    self.total_time = time.time()
             self.rate.sleep()
 
         # rospy.spin()
 
 
 if __name__ == "__main__":
-    waypoint_estimator_nn = WaypointEstimatorNN(safe_flight=True)
+    waypoint_estimator_nn = WaypointEstimatorNN(safe_flight=False)
     waypoint_estimator_nn.run()
