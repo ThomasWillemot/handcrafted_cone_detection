@@ -44,7 +44,7 @@ class WaypointEstimatorNN:
         # TODO change path of mask
         self.counter = 0
 
-        self.kernel = np.ones((7, 7), np.uint8)
+        self.kernel = np.ones((5, 5), np.uint8)
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
         self.image2_buffer = []
@@ -302,9 +302,12 @@ class WaypointEstimatorNN:
         if self.safe_flight:
             coordinates = coordinates
         x_glob = coordinates[0]*np.cos(cam_angle) + coordinates[2]*np.sin(cam_angle)
-        z_glob = -coordinates[0]*np.sin(cam_angle) + coordinates[2]*np.cos(cam_angle) -1.5
+        z_glob = -coordinates[0]*np.sin(cam_angle) + coordinates[2]*np.cos(cam_angle) +1
+        z_glob = 0
         ref = PointStamped(header=Header(frame_id="agent"),
                            point=Point(x=x_glob, y=coordinates[1], z=z_glob))
+        print('REFERENTIE')
+        print(ref)
         self.reference_publisher.publish(ref)
 
     def run(self):
@@ -324,7 +327,7 @@ class WaypointEstimatorNN:
 
                 relat_coor = self.extract_waypoint(image1)
 
-                if time.time() - self.total_time > 10:
+                if time.time() - self.total_time > 0.5:
                     print('Coordinates')
                     print(round(self.running_average[0], 2), round(self.running_average[1], 2),
                           round(self.running_average[2], 2))
