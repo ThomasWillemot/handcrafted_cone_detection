@@ -22,7 +22,7 @@ from geometry_msgs import *
 from std_srvs.srv import Trigger
 from handcrafted_cone_detection.srv import SendRelCor, SendRelCorResponse
 from handcrafted_cone_detection.msg import ConeImgLoc
-from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files import cnn_architecture
+from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files import cnn_architecture, bebop_400_arch_2
 from src.sim.ros.python3_ros_ws.src.handcrafted_cone_detection.helper_files.ArchitectureConfig import ArchitectureConfig
 
 
@@ -43,7 +43,7 @@ class WaypointEstimatorNN:
         self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
         # TODO change path of mask
         self.counter = 0
-
+        self.av_fps = 30
         self.kernel = np.ones((5, 5), np.uint8)
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
@@ -62,7 +62,9 @@ class WaypointEstimatorNN:
         self.epoch = 0
         self.net = eval('cnn_architecture').Net(config=architecture_config) \
             if architecture_config is not None else None
+        #ipv cnn_architecture: bebop_400_arch_2
         self.load_checkpoint('/media/thomas/Elements/training_nn/res_200/6100_lr_0002')
+        #self.load_checkpoint('/media/thomas/Elements/training_nn/bebop_high_res/net_str_1_new_ARCH_5')
         self.put_model_on_device('cuda')
 
     # Function to extract the cone out of an image. The part of the cone(s) are binary ones, the other parts are 0.
@@ -91,9 +93,9 @@ class WaypointEstimatorNN:
     def extend_image(self, image, dimensions):
         empty_image = np.zeros(dimensions)
         orig_shape = image.shape
-        extended_im = empty_image[int(dimensions[0] / 2 - orig_shape[0] / 2):int(dimensions[0] / 2 + orig_shape[0] / 2),
+        empty_image[int(dimensions[0] / 2 - orig_shape[0] / 2):int(dimensions[0] / 2 + orig_shape[0] / 2),
                       :] = image[:,4:852]
-        return extended_im
+        return empty_image
 
     def crop_image(self, image, dimensions):
         orig_shape = image.shape
@@ -102,7 +104,7 @@ class WaypointEstimatorNN:
                int(orig_shape[1] / 2 - dimensions[1] / 2):int(orig_shape[1] / 2 + dimensions[1] / 2)]
 
     # Extracts the waypoints (3d location) out of the current image.
-    def extract_waypoint(self, image):
+    def extract_waypoint(self, image,NN = True):
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
         # rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
         #                       borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture #TODO is already rectified on bebop
@@ -110,18 +112,29 @@ class WaypointEstimatorNN:
         post_proc_or = self.post_process_yellow_cones(cv_im)
         post_proc_im = self.post_process_image(post_proc_or)
         cropped_image = self.extend_image(post_proc_im, [800, 848])  # TODO horizon
-
-        down_tens_image, img = self.downsample_image(cropped_image, factor=4)
-        bin_im_sum = np.sum(np.sum(img, axis=1), axis=0)
-        # Positioning in 2D of cone parts
-        cone_coordinates = self.eval_neural_net(down_tens_image)
-        # Use scaling factor ( neural net is trained in other way than images are.
-        cone_coordinates *= .8
-        #if bin_im_sum > 400 * 400:
-        #    print("not used")
-        #    cone_coordinates = np.array([0, 0, 0, 0, 0, 0])
-        #    self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
-        #    cone_coordinates = self.running_average
+        if NN:
+            down_tens_image, img = self.downsample_image(cropped_image, factor=4)
+            bin_im_sum = np.sum(np.sum(img, axis=1), axis=0)
+            # Positioning in 2D of cone parts
+            cone_coordinates = self.eval_neural_net(down_tens_image)
+            # Use scaling factor ( neural net is trained in other way than images are.
+            cone_coordinates *= .8
+            #self.bin_im_publish(255 * img)
+            #if bin_im_sum > 400 * 400:
+            #    print("not used")
+            #    cone_coordinates = np.array([0, 0, 0, 0, 0, 0])
+            #    self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
+            #    cone_coordinates = self.running_average
+        else:
+            tune_factor = 500
+            print(cropped_image.shape)
+            image_coord = self.get_cone_2d_location(cropped_image)
+            cone_coordinates_first = self.get_cone_3d_location(image_coord[2], 0.18, image_coord[0:2], tune_factor)
+            cone_coordinates = np.array([cone_coordinates_first[0],cone_coordinates_first[1],cone_coordinates_first[2],2,1,1])
+            #self.bin_im_publish(cropped_image)
+        fps = 1 / (time.time() - self.total_time)
+        self.av_fps = fps * 0.01 + self.av_fps * 0.99
+        print(self.av_fps)
         if False:
             k = k+1
         else:
@@ -135,7 +148,7 @@ class WaypointEstimatorNN:
             self.image_publisher(x_position, y_position, 25 / cone_coordinates[0])
             self.threshold_image_publish(cv_im, x_position, y_position, 150 / 2, x_2=x_2_position, y_2=y_2_position,
                                          size_2=150 / cone_coordinates[3])
-        self.bin_im_publish(255*img)
+
         return cone_coordinates
 
     # Used to make bin map of orange cones
@@ -214,6 +227,66 @@ class WaypointEstimatorNN:
         if np.amax(image_np_gray) == 255:
             image_np_gray = image_np_gray / 255
         return image_np_gray
+
+    def get_cone_2d_location(self, bin_im):
+        row_sum = np.sum(bin_im, axis=1)
+        i = 0
+
+        while row_sum[i] > 1 and i < 799:
+            bin_im[i, :] = np.zeros(848)
+            i += 1
+
+        airrow = 0
+        for row_idx in range(799):
+            if row_sum[row_idx] > 400 * 255:
+                airrow = row_idx
+        bin_im[1:airrow, :] = 0
+        row_sum = np.sum(bin_im, axis=1)
+        cone_found = False
+        cone_row = 0
+        max_row = 0
+        row = 799  # start where no drone parts are visible in image
+        cone_started = False
+        while not cone_found and row >= 0:
+            if row_sum[row] >= max_row and row_sum[row] > 4 * 255:
+                cone_row = row
+                max_row = row_sum[row]
+                cone_started = True
+            elif cone_started:
+                cone_found = True
+            row -= 1
+
+        current_start = 0
+        max_start = 0
+        max_width = 0
+        current_width = 0
+        for col_index in range(847):
+            if bin_im[cone_row, col_index] == 0:
+                if current_width > max_width:
+                    max_width = current_width
+                    max_start = current_start
+                current_width = 0
+                current_start = 0
+            else:
+                if current_width == 0:
+                    current_start = col_index
+                current_width += 1
+        if current_width > max_width:
+            max_width = current_width
+            max_start = current_start
+
+        return [max_start + int(np.ceil(max_width / 2)) - 424, -cone_row + 400, max_width]
+
+    def get_cone_3d_location(self, cone_width_px, cone_width_m, conetop_coor, tune_factor):
+        x_cor = 0
+        y_cor = 0
+        z_cor = -1  # do not update if z remains -1 TODO
+        if cone_width_px > 0:  # only updates when cone detected
+            # position relative to the camera in meters.
+            z_cor = cone_width_m * tune_factor / cone_width_px
+            x_cor = conetop_coor[0] * z_cor / tune_factor
+            y_cor = conetop_coor[1] * z_cor / tune_factor
+        return np.array([z_cor, -x_cor, y_cor])
 
     # Handles the service requests.
     def handle_cor_req(self, req):
@@ -306,8 +379,8 @@ class WaypointEstimatorNN:
         z_glob = 0
         ref = PointStamped(header=Header(frame_id="agent"),
                            point=Point(x=x_glob, y=coordinates[1], z=z_glob))
-        print('REFERENTIE')
-        print(ref)
+        #print('REFERENTIE')
+        #print(ref)
         self.reference_publisher.publish(ref)
 
     def run(self):
@@ -324,17 +397,16 @@ class WaypointEstimatorNN:
 
                 self.image1_buffer.clear()
                 self.image2_buffer.clear()
+                self.total_time = time.time()
+                relat_coor = self.extract_waypoint(image1,NN=True)
 
-                relat_coor = self.extract_waypoint(image1)
+                #self.total_time = time.time()
+                print('Coordinates')
+                print(round(self.running_average[0], 2), round(self.running_average[1], 2),
+                      round(self.running_average[2], 2))
 
-                if time.time() - self.total_time > 0.5:
-                    print('Coordinates')
-                    print(round(self.running_average[0], 2), round(self.running_average[1], 2),
-                          round(self.running_average[2], 2))
-
-                    self.publish_reference(self.running_average)
-                    self.image_stamp = image1.header.stamp
-                    self.total_time = time.time()
+                self.publish_reference(self.running_average)
+                self.image_stamp = image1.header.stamp
             self.rate.sleep()
 
         # rospy.spin()
