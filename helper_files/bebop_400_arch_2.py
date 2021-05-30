@@ -15,7 +15,7 @@ Expects 1*848*800 inputs and outputs 6c
 """
 
 
-class Net(BaseNet):
+class Net(Local_Base_Net):
 
     def __init__(self, config: ArchitectureConfig, quiet: bool = False):
         super().__init__(config=config, quiet=True)

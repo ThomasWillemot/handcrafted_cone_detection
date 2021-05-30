@@ -43,13 +43,13 @@ class WaypointEstimatorNN:
         self.mask = cv2.imread('src/sim/ros/python3_ros_ws/src/handcrafted_cone_detection/src/frame_drone_mask.png', 0)
         # TODO change path of mask
         self.counter = 0
-        self.av_fps = 30
+        self.av_fps = .01
         self.kernel = np.ones((5, 5), np.uint8)
         self.rate = rospy.Rate(1000)
         self.image1_buffer = []
         self.image2_buffer = []
         self.image_stamp = rospy.Time(0)
-        self.running_average = np.array([0, 0, 0, 0, 0, 0])
+        self.running_average = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.original_model_device = 'default'
         # TODO enable if on drone self._init_fsm_handshake_srv()
         self.pub = rospy.Publisher('cone_coordin', ConeImgLoc, queue_size=10)
@@ -62,7 +62,7 @@ class WaypointEstimatorNN:
         self.epoch = 0
         self.net = eval('cnn_architecture').Net(config=architecture_config) \
             if architecture_config is not None else None
-        #ipv cnn_architecture: bebop_400_arch_2
+        # cnn_architecture: bebop_400_arch_2
         self.load_checkpoint('/media/thomas/Elements/training_nn/res_200/6100_lr_0002')
         #self.load_checkpoint('/media/thomas/Elements/training_nn/bebop_high_res/net_str_1_new_ARCH_5')
         self.put_model_on_device('cuda')
@@ -106,46 +106,53 @@ class WaypointEstimatorNN:
     # Extracts the waypoints (3d location) out of the current image.
     def extract_waypoint(self, image,NN = True):
         cv_im = self.bridge.imgmsg_to_cv2(image, desired_encoding='passthrough')  # Load images to cv
-        # rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
-        #                       borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture #TODO is already rectified on bebop
+
+        #rect_image = cv2.remap(cv_im, self.map1, self.map2, interpolation=cv2.INTER_LINEAR,
+        #                      borderMode=cv2.BORDER_CONSTANT)  # Remap fisheye to normal picture #TODO is already rectified on bebop
+
         # Cone segmentation
+
         post_proc_or = self.post_process_yellow_cones(cv_im)
         post_proc_im = self.post_process_image(post_proc_or)
         cropped_image = self.extend_image(post_proc_im, [800, 848])  # TODO horizon
+
         if NN:
             down_tens_image, img = self.downsample_image(cropped_image, factor=4)
-            bin_im_sum = np.sum(np.sum(img, axis=1), axis=0)
+            #bin_im_sum = np.sum(np.sum(img, axis=1), axis=0)
             # Positioning in 2D of cone parts
             cone_coordinates = self.eval_neural_net(down_tens_image)
             # Use scaling factor ( neural net is trained in other way than images are.
             cone_coordinates *= .8
-            #self.bin_im_publish(255 * img)
+            self.bin_im_publish(255 * img)
             #if bin_im_sum > 400 * 400:
             #    print("not used")
             #    cone_coordinates = np.array([0, 0, 0, 0, 0, 0])
-            #    self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
+            #self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
             #    cone_coordinates = self.running_average
         else:
-            tune_factor = 500
-            print(cropped_image.shape)
-            image_coord = self.get_cone_2d_location(cropped_image)
+            tune_factor = 420
+
+            image_coord = self.get_cone_2d_location(255*cropped_image)
+            self.total_time = time.time()
             cone_coordinates_first = self.get_cone_3d_location(image_coord[2], 0.18, image_coord[0:2], tune_factor)
+            time_rect = (time.time() - self.total_time)
+            self.av_fps = time_rect * 0.01 + self.av_fps * 0.99
+            print(self.av_fps)
             cone_coordinates = np.array([cone_coordinates_first[0],cone_coordinates_first[1],cone_coordinates_first[2],2,1,1])
-            #self.bin_im_publish(cropped_image)
-        fps = 1 / (time.time() - self.total_time)
-        self.av_fps = fps * 0.01 + self.av_fps * 0.99
-        print(self.av_fps)
+            self.bin_im_publish(cropped_image*255)
+
+
         if False:
-            k = k+1
+            k = k
         else:
             x_position = int(-cone_coordinates[1] / cone_coordinates[0] * 539 + 427)  # TODO
             y_position = int(-cone_coordinates[2] / cone_coordinates[0] * 527 + 240)  # TODO
             x_2_position = int(-cone_coordinates[4] / cone_coordinates[3] * 539 + 427)  # TODO
             y_2_position = int(-cone_coordinates[5] / cone_coordinates[3] * 529 + 239)  # TODO
             #cone_coordinates[0] -= 2.5
-            self.running_average = cone_coordinates #self.running_average * 0.65 + cone_coordinates * 0.35
+            self.running_average = self.running_average * 0.65 + cone_coordinates * 0.35
             cone_coordinates = self.running_average
-            self.image_publisher(x_position, y_position, 25 / cone_coordinates[0])
+            #self.image_publisher(x_position, y_position, 25 / cone_coordinates[0])
             self.threshold_image_publish(cv_im, x_position, y_position, 150 / 2, x_2=x_2_position, y_2=y_2_position,
                                          size_2=150 / cone_coordinates[3])
 
@@ -371,7 +378,7 @@ class WaypointEstimatorNN:
 
     # Publish the drone location with an offset height.
     def publish_reference(self, coordinates):
-        cam_angle = 2*np.pi/360*15
+        cam_angle = 2*np.pi/360*30
         if self.safe_flight:
             coordinates = coordinates
         x_glob = coordinates[0]*np.cos(cam_angle) + coordinates[2]*np.sin(cam_angle)
@@ -397,8 +404,8 @@ class WaypointEstimatorNN:
 
                 self.image1_buffer.clear()
                 self.image2_buffer.clear()
-                self.total_time = time.time()
-                relat_coor = self.extract_waypoint(image1,NN=True)
+
+                relat_coor = self.extract_waypoint(image1,NN=False)
 
                 #self.total_time = time.time()
                 print('Coordinates')
